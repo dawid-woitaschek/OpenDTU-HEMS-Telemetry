@@ -9,22 +9,24 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
 
 type Metadata struct {
-	SchemaVersion      int
-	BootID             string
-	UploadID           string
-	Uptime             string
-	Firmware           string
-	Build              string
-	ResetReason        string
-	TelemetrySequence  string
-	CheckpointSequence string
-	DedupeKey          string
-	Summary            Summary
+	SchemaVersion              int
+	BootID                     string
+	UploadID                   string
+	Uptime                     string
+	Firmware                   string
+	Build                      string
+	ResetReason                string
+	TelemetrySequence          string
+	CheckpointSequence         string
+	AcceptedCheckpointSequence *uint64
+	DedupeKey                  string
+	Summary                    Summary
 }
 
 type Summary struct {
@@ -66,6 +68,13 @@ func Parse(raw []byte) (Metadata, error) {
 	m.ResetReason = first(root, "system.reset_reason.name", "system.reset_reason", "reset_reason")
 	m.TelemetrySequence = first(root, "telemetry_sequence", "sequence")
 	m.CheckpointSequence = first(root, "checkpoint_sequence", "diagnostics.checkpoint_sequence")
+	// Acknowledgements use only non-negative JSON integer counters. Other
+	// optional representations remain in the raw payload and metadata hints.
+	if value, ok := firstValue(root, "checkpoint_sequence", "diagnostics.checkpoint_sequence").(json.Number); ok {
+		if sequence, err := strconv.ParseUint(string(value), 10, 64); err == nil {
+			m.AcceptedCheckpointSequence = &sequence
+		}
+	}
 	m.Summary = Summary{
 		InternalFree:     first(root, "heap.internal.free_bytes", "heap.internal.free", "memory.internal.free_bytes"),
 		InternalMinimum:  first(root, "heap.internal.minimum_free_bytes", "heap.internal.min_free_bytes", "memory.internal.minimum_free_bytes"),
@@ -98,6 +107,18 @@ func Parse(raw []byte) (Metadata, error) {
 }
 
 func first(root map[string]any, paths ...string) string {
+	switch value := firstValue(root, paths...).(type) {
+	case string:
+		return value
+	case json.Number:
+		return string(value)
+	case bool:
+		return strconv.FormatBool(value)
+	}
+	return ""
+}
+
+func firstValue(root map[string]any, paths ...string) any {
 	for _, path := range paths {
 		var v any = root
 		for _, part := range strings.Split(path, ".") {
@@ -114,13 +135,10 @@ func first(root map[string]any, paths ...string) string {
 				return value
 			}
 		case json.Number:
-			return string(value)
+			return value
 		case bool:
-			if value {
-				return "true"
-			}
-			return "false"
+			return value
 		}
 	}
-	return ""
+	return nil
 }

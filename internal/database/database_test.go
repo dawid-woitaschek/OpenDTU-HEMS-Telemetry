@@ -41,6 +41,9 @@ func createTestSource(t *testing.T, s *Store, name string) (Source, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := s.CreateToken(context.Background(), source.ID, testTime); err != nil {
+		t.Fatal(err)
+	}
 	_, token, err := s.ShowToken(context.Background(), source.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +101,7 @@ func TestPersistenceAssociationAndRevocation(t *testing.T) {
 	if err != nil || again != token {
 		t.Fatal("token not recoverable after restart")
 	}
-	if err := s.RevokeSource(ctx, source.ID, testTime.Add(time.Hour)); err != nil {
+	if err := s.DeleteToken(ctx, source.ID, testTime.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Authenticate(ctx, token); !errors.Is(err, ErrUnauthorized) {

@@ -110,12 +110,16 @@ connectivity without needing a shell or curl in the runtime image.
 
 1. Open `https://<your-host>/sources` and supply the configured administrator
    credentials when the browser prompts.
-2. Enter a name such as **Schwägerin** and select **Create source**. This is the
-   only source configuration field; the token is generated automatically.
-3. Select **Show**, copy the API token, and configure it on the sending device.
-4. **Delete / Revoke** immediately disables a token. The source remains as a
-   revoked entry so all historical uploads stay inspectable and downloadable.
-   Create a new source/token to resume sending after revocation.
+2. Enter a name such as **Schwägerin** and select **Create source**. The source
+   is a permanent logical identity and initially has no API token.
+3. Select **Create token** for that source, then **Show token** to copy the
+   generated credential and configure it on the sending device. Each source
+   has at most one active token; creation cannot replace an active credential.
+4. **Delete token** immediately invalidates that credential. The source ID,
+   name, last-seen time, and historical uploads remain. **Create token** becomes
+   available again and issues a new credential for the **same source**. Its
+   history and duplicate detection continue across token replacements; the
+   previous token stays invalid. There is no source deletion action.
 
 For these shell examples, set `TELEMETRY_HOST` to your public hostname and
 `ADMIN_USERNAME` to your configured username; Compose's `.env` is not
@@ -136,8 +140,17 @@ unset DEVICE_TOKEN
 The acknowledgement is compact:
 
 ```json
-{"accepted":true,"received_at":"2026-10-30T14:05:00.000000000Z"}
+{"accepted":true,"received_at":"2026-10-30T14:05:00.000000000Z","accepted_checkpoint_sequence":128}
 ```
+
+`accepted_checkpoint_sequence` acknowledges the request's `checkpoint_sequence`
+(or `diagnostics.checkpoint_sequence`) only after successful database commit.
+Use an unsigned 64-bit decimal JSON integer, including zero. Missing counters,
+strings, negative/fractional/exponent values, booleans and out-of-range values
+are not acknowledged; the otherwise valid snapshot and all its raw fields are
+still stored. The checkpoint field is omitted when no valid counter is present.
+A rejected request or failed database transaction never receives
+a successful checkpoint acknowledgement.
 
 The example uses fixed boot/upload/sequence IDs. Repeatedly sending it to the
 same source is intentionally deduplicated; change the identifiers to simulate
@@ -168,6 +181,7 @@ A compact illustrative payload:
   "schema_version": 1,
   "boot_id": "boot-unique-id",
   "telemetry_sequence": 42,
+  "checkpoint_sequence": 128,
   "system": {
     "uptime_seconds": 83640,
     "firmware_version": "field-test",
@@ -224,9 +238,14 @@ Duplicate handling is scoped to the authenticated source, in this priority order
 
 The sender should assign unique transmission IDs or per-boot snapshot counters.
 For an identical identity, the first payload and receive timestamp win. A retry
-returns `200` with `"duplicate":true` and the original receive time; last seen is
-updated. Bare counters without boot identity are stored normally because they
-may restart after a reboot. Uploads without any identifiers are always accepted.
+returns `200` with `"duplicate":true`, the original receive time, and the original
+persisted checkpoint acknowledgement when the retry also supplies a valid
+checkpoint counter. Last seen is updated. Retries should reuse the same payload
+and identifiers: a different checkpoint on a reused identity does not replace
+or acknowledge unpersisted data. If either the original payload or retry has no
+valid checkpoint counter, that acknowledgement field is omitted. Bare counters
+without boot identity are stored normally because they may restart after a
+reboot. Uploads without any identifiers are always accepted.
 
 Responses: `200` accepted/duplicate, `400` malformed JSON/schema, `401` missing,
 unknown or revoked token, `405` non-POST ingestion, `413` too large, `415` wrong
@@ -265,11 +284,31 @@ and receive time. Paths use server-generated IDs, never device/source-supplied
 filenames. A valid empty selection produces an empty ZIP. Failed streams are
 left incomplete; a successful ZIP integrity check verifies completeness.
 
+ZIP downloads have no fixed total-duration limit in the collector: this route
+renews a 60-second write deadline for each output chunk, so a progressing export
+can run substantially longer than the normal 60-second response timeout. A
+blocked write remains bounded, and client disconnects cancel database iteration
+and output through the request context. Other API/UI requests keep the ordinary
+server timeouts. Any separately configured Traefik download timeout must also
+allow the desired duration.
+
 ## Persistence and backup
 
 On Dockyard, `./data/telemetry.db` is the database, with SQLite's associated
 `telemetry.db-wal` and `telemetry.db-shm` files while running. Keep the directory
 writable only by UID 65532 (or the host administrator). No retention job runs.
+
+Database schema version 2 separates source identity from token lifecycle using
+nullable encrypted token/digest and token creation/deletion timestamps. Existing
+version-1 databases upgrade automatically in a single transaction on startup.
+Source IDs/names, last-seen times, uploads, original JSON bytes and active tokens
+are preserved. Previously revoked sources become normal sources without a
+token, and their old revocation time becomes token-deletion metadata. For active
+v1 tokens, token creation time is initialized from source creation time, since
+v1 did not record it separately. Token creation/deletion does not modify source
+creation time. Key verification runs before the migration commits; an incorrect
+master key leaves the v1 schema unchanged. Keep the same encryption key and take
+a consistent backup before upgrading. Telemetry payload schema remains version 1.
 
 For an online consistent backup, install the SQLite CLI on the **host** and use
 its backup operation, choosing an existing secure destination directory:

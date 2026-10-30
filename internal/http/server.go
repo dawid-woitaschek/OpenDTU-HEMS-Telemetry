@@ -3,6 +3,7 @@ package httpserver
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
@@ -27,6 +28,8 @@ import (
 )
 
 const MaxTelemetryBytes int64 = 1024 * 1024 // 1 MiB, including whitespace
+
+const exportWriteIdleTimeout = 60 * time.Second
 
 type Server struct {
 	store              *database.Store
@@ -54,7 +57,8 @@ func New(store *database.Store, username, password string, logger *log.Logger) (
 	admin.HandleFunc("GET /sources", s.sources)
 	admin.HandleFunc("POST /sources", s.createSource)
 	admin.HandleFunc("POST /sources/{id}/token", s.showToken)
-	admin.HandleFunc("POST /sources/{id}/revoke", s.revoke)
+	admin.HandleFunc("POST /sources/{id}/token/create", s.createToken)
+	admin.HandleFunc("POST /sources/{id}/token/delete", s.deleteToken)
 	admin.HandleFunc("GET /uploads", s.uploads)
 	admin.HandleFunc("GET /uploads/{id}", s.detail)
 	admin.HandleFunc("GET /uploads/{id}/download", s.download)
@@ -164,11 +168,16 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	checkpoint := u.Metadata.AcceptedCheckpointSequence
+	if m.AcceptedCheckpointSequence == nil {
+		checkpoint = nil
+	}
 	json.NewEncoder(w).Encode(struct {
-		Accepted   bool   `json:"accepted"`
-		ReceivedAt string `json:"received_at"`
-		Duplicate  bool   `json:"duplicate,omitempty"`
-	}{true, u.ReceivedAt, duplicate})
+		Accepted                   bool    `json:"accepted"`
+		ReceivedAt                 string  `json:"received_at"`
+		Duplicate                  bool    `json:"duplicate,omitempty"`
+		AcceptedCheckpointSequence *uint64 `json:"accepted_checkpoint_sequence,omitempty"`
+	}{true, u.ReceivedAt, duplicate, checkpoint})
 }
 
 func deviceUnauthorized(w http.ResponseWriter) {
@@ -281,7 +290,7 @@ func (s *Server) showToken(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "token", page{Title: "API token", Source: source, Token: token})
 }
 
-func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
+func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 	if !s.form(w, r) {
 		return
 	}
@@ -289,11 +298,33 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.store.RevokeSource(r.Context(), id, time.Now()); err != nil {
+	if err := s.store.CreateToken(r.Context(), id, time.Now()); err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			http.NotFound(w, r)
+		case errors.Is(err, database.ErrTokenExists):
+			http.Error(w, "source already has an active token", http.StatusConflict)
+		default:
+			s.failure(w, "create source token")
+		}
+		return
+	}
+	http.Redirect(w, r, "/sources", http.StatusSeeOther)
+}
+
+func (s *Server) deleteToken(w http.ResponseWriter, r *http.Request) {
+	if !s.form(w, r) {
+		return
+	}
+	id, ok := requestID(w, r)
+	if !ok {
+		return
+	}
+	if err := s.store.DeleteToken(r.Context(), id, time.Now()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.NotFound(w, r)
 		} else {
-			s.failure(w, "revoke source token")
+			s.failure(w, "delete source token")
 		}
 		return
 	}
@@ -425,12 +456,19 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Replace the ordinary per-request write deadline with a sliding deadline
+	// only for this authenticated export. Each write gets a bounded window;
+	// a progressing download can outlive the server's global WriteTimeout.
+	output := &exportWriter{ResponseWriter: w, controller: http.NewResponseController(w), ctx: r.Context()}
+	if err := output.renewDeadline(); err != nil {
+		s.failure(w, "set export write deadline")
+		return
+	}
 	// ZIP entries are the exact received bytes; names contain only server IDs.
 	// Sidecars supply source and receive-time metadata without modifying device
 	// payloads or trusting source names as filesystem paths.
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", `attachment; filename="telemetry.zip"`)
-	output := &exportWriter{ResponseWriter: w}
 	z := zip.NewWriter(output)
 	err = s.store.Export(r.Context(), f, func(u database.Upload) error {
 		h := &zip.FileHeader{Name: fmt.Sprintf("source-%d/telemetry-%d.json", u.SourceID, u.ID), Method: zip.Deflate}
@@ -472,13 +510,32 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 
 type exportWriter struct {
 	http.ResponseWriter
-	started bool
+	started    bool
+	controller *http.ResponseController
+	ctx        context.Context
+}
+
+func (w *exportWriter) renewDeadline() error {
+	if err := w.ctx.Err(); err != nil {
+		return err
+	}
+	err := w.controller.SetWriteDeadline(time.Now().Add(exportWriteIdleTimeout))
+	// ResponseRecorder and other non-network writers have no socket deadline.
+	if errors.Is(err, http.ErrNotSupported) {
+		return nil
+	}
+	return err
 }
 
 func (w *exportWriter) Write(b []byte) (int, error) {
+	if err := w.renewDeadline(); err != nil {
+		return 0, err
+	}
 	w.started = true
 	return w.ResponseWriter.Write(b)
 }
+
+func (w *exportWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (s *Server) exportFailure() {
 	if s.logger != nil {

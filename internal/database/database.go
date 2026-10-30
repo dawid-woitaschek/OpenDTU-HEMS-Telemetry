@@ -18,7 +18,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var ErrUnauthorized = errors.New("invalid or revoked source token")
+var ErrUnauthorized = errors.New("invalid or deleted source token")
+var ErrTokenExists = errors.New("source already has an active token")
 
 // Fixed-width UTC timestamps also sort correctly as SQLite TEXT.
 const timestampFormat = "2006-01-02T15:04:05.000000000Z"
@@ -31,11 +32,13 @@ type Store struct {
 }
 
 type Source struct {
-	ID        int64
-	Name      string
-	CreatedAt string
-	LastSeen  string
-	RevokedAt string
+	ID             int64
+	Name           string
+	CreatedAt      string
+	LastSeen       string
+	HasToken       bool
+	TokenCreatedAt string
+	TokenDeletedAt string
 }
 
 type Upload struct {
@@ -93,52 +96,23 @@ func Open(path string, tokenCipher *auth.Cipher) (*Store, error) {
 }
 
 func (s *Store) initialize() error {
-	var version int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
-		return err
-	}
-	if version > 1 {
-		return errors.New("database schema is newer than this collector")
-	}
-	_, err := s.db.Exec(`
-BEGIN;
-CREATE TABLE IF NOT EXISTS telemetry_sources (
- id INTEGER PRIMARY KEY,
- name TEXT NOT NULL,
- token_encrypted BLOB,
- token_hash BLOB UNIQUE,
- created_at TEXT NOT NULL,
- last_seen_at TEXT,
- revoked_at TEXT,
- CHECK ((token_encrypted IS NULL) = (token_hash IS NULL))
-);
-CREATE TABLE IF NOT EXISTS telemetry_uploads (
- id INTEGER PRIMARY KEY,
- source_id INTEGER NOT NULL REFERENCES telemetry_sources(id),
- received_at TEXT NOT NULL,
- schema_version INTEGER NOT NULL,
- boot_id TEXT NOT NULL,
- upload_id TEXT NOT NULL,
- uptime TEXT NOT NULL,
- firmware TEXT NOT NULL,
- build_identity TEXT NOT NULL,
- reset_reason TEXT NOT NULL,
- telemetry_sequence TEXT NOT NULL,
- checkpoint_sequence TEXT NOT NULL,
- dedupe_key TEXT,
- summary_json TEXT NOT NULL,
- raw_json BLOB NOT NULL,
- UNIQUE(source_id, dedupe_key)
-);
-CREATE INDEX IF NOT EXISTS uploads_source_id ON telemetry_uploads(source_id, id DESC);
-CREATE INDEX IF NOT EXISTS uploads_received ON telemetry_uploads(received_at);
-PRAGMA user_version = 1;
-COMMIT;`)
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
-	// Fail early for an incorrect master key, before accepting new credentials.
-	rows, err := s.db.Query("SELECT id, token_encrypted, token_hash FROM telemetry_sources WHERE revoked_at IS NULL")
+	defer tx.Rollback()
+	if err := migrate(tx); err != nil {
+		return err
+	}
+	// Verify the key before committing a migration or accepting new credentials.
+	if err := s.verifyTokens(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) verifyTokens(tx *sql.Tx) error {
+	rows, err := tx.Query("SELECT id, token_encrypted, token_hash FROM telemetry_sources WHERE token_hash IS NOT NULL")
 	if err != nil {
 		return err
 	}
@@ -165,41 +139,46 @@ func (s *Store) Close() error { return s.db.Close() }
 func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
 func (s *Store) CreateSource(ctx context.Context, name string, now time.Time) (Source, error) {
-	var source Source
-	token, err := auth.GenerateToken()
-	if err != nil {
-		return source, err
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return source, err
-	}
-	defer tx.Rollback()
 	created := Timestamp(now)
-	result, err := tx.ExecContext(ctx, "INSERT INTO telemetry_sources(name, created_at) VALUES (?, ?)", name, created)
+	result, err := s.db.ExecContext(ctx, "INSERT INTO telemetry_sources(name, created_at) VALUES (?, ?)", name, created)
 	if err != nil {
-		return source, err
+		return Source{}, err
 	}
 	id, err := result.LastInsertId()
 	if err != nil {
-		return source, err
-	}
-	encrypted, err := s.cipher.Encrypt(token, id)
-	if err != nil {
-		return source, err
-	}
-	_, err = tx.ExecContext(ctx, "UPDATE telemetry_sources SET token_encrypted = ?, token_hash = ? WHERE id = ?", encrypted, auth.Digest(token), id)
-	if err != nil {
-		return source, err
-	}
-	if err = tx.Commit(); err != nil {
-		return source, err
+		return Source{}, err
 	}
 	return Source{ID: id, Name: name, CreatedAt: created}, nil
 }
 
+// CreateToken fills an empty credential slot; it never replaces an active token.
+// The conditional update also protects against concurrent creation requests.
+func (s *Store) CreateToken(ctx context.Context, sourceID int64, now time.Time) error {
+	token, err := auth.GenerateToken()
+	if err != nil {
+		return err
+	}
+	encrypted, err := s.cipher.Encrypt(token, sourceID)
+	if err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE telemetry_sources SET token_encrypted = ?, token_hash = ?, token_created_at = ?, token_deleted_at = NULL WHERE id = ? AND token_hash IS NULL`, encrypted, auth.Digest(token), Timestamp(now), sourceID)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil || n != 0 {
+		return err
+	}
+	var id int64
+	if err := s.db.QueryRowContext(ctx, "SELECT id FROM telemetry_sources WHERE id = ?", sourceID).Scan(&id); err != nil {
+		return err
+	}
+	return ErrTokenExists
+}
+
 func (s *Store) Sources(ctx context.Context) ([]Source, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, created_at, COALESCE(last_seen_at, ''), COALESCE(revoked_at, '') FROM telemetry_sources ORDER BY id DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, created_at, COALESCE(last_seen_at, ''), token_hash IS NOT NULL, COALESCE(token_created_at, ''), COALESCE(token_deleted_at, '') FROM telemetry_sources ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +186,7 @@ func (s *Store) Sources(ctx context.Context) ([]Source, error) {
 	var sources []Source
 	for rows.Next() {
 		var src Source
-		if err := rows.Scan(&src.ID, &src.Name, &src.CreatedAt, &src.LastSeen, &src.RevokedAt); err != nil {
+		if err := rows.Scan(&src.ID, &src.Name, &src.CreatedAt, &src.LastSeen, &src.HasToken, &src.TokenCreatedAt, &src.TokenDeletedAt); err != nil {
 			return nil, err
 		}
 		sources = append(sources, src)
@@ -218,7 +197,7 @@ func (s *Store) Sources(ctx context.Context) ([]Source, error) {
 func (s *Store) ShowToken(ctx context.Context, id int64) (Source, string, error) {
 	var source Source
 	var encrypted []byte
-	err := s.db.QueryRowContext(ctx, "SELECT id, name, token_encrypted FROM telemetry_sources WHERE id = ? AND revoked_at IS NULL", id).Scan(&source.ID, &source.Name, &encrypted)
+	err := s.db.QueryRowContext(ctx, "SELECT id, name, token_encrypted FROM telemetry_sources WHERE id = ? AND token_hash IS NOT NULL", id).Scan(&source.ID, &source.Name, &encrypted)
 	if err != nil {
 		return source, "", err
 	}
@@ -226,8 +205,8 @@ func (s *Store) ShowToken(ctx context.Context, id int64) (Source, string, error)
 	return source, token, err
 }
 
-func (s *Store) RevokeSource(ctx context.Context, id int64, now time.Time) error {
-	result, err := s.db.ExecContext(ctx, "UPDATE telemetry_sources SET token_encrypted = NULL, token_hash = NULL, revoked_at = ? WHERE id = ? AND revoked_at IS NULL", Timestamp(now), id)
+func (s *Store) DeleteToken(ctx context.Context, id int64, now time.Time) error {
+	result, err := s.db.ExecContext(ctx, "UPDATE telemetry_sources SET token_encrypted = NULL, token_hash = NULL, token_deleted_at = ? WHERE id = ? AND token_hash IS NOT NULL", Timestamp(now), id)
 	if err != nil {
 		return err
 	}
@@ -240,7 +219,7 @@ func (s *Store) RevokeSource(ctx context.Context, id int64, now time.Time) error
 
 func (s *Store) Authenticate(ctx context.Context, token string) error {
 	var id int64
-	err := s.db.QueryRowContext(ctx, "SELECT id FROM telemetry_sources WHERE token_hash = ? AND revoked_at IS NULL", auth.Digest(token)).Scan(&id)
+	err := s.db.QueryRowContext(ctx, "SELECT id FROM telemetry_sources WHERE token_hash = ?", auth.Digest(token)).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrUnauthorized
 	}
@@ -258,7 +237,7 @@ func (s *Store) Accept(ctx context.Context, token string, raw []byte, m telemetr
 	defer tx.Rollback()
 	received := Timestamp(now)
 	var sourceID int64
-	err = tx.QueryRowContext(ctx, `UPDATE telemetry_sources SET last_seen_at = CASE WHEN last_seen_at > ? THEN last_seen_at ELSE ? END WHERE token_hash = ? AND revoked_at IS NULL RETURNING id`, received, received, auth.Digest(token)).Scan(&sourceID)
+	err = tx.QueryRowContext(ctx, `UPDATE telemetry_sources SET last_seen_at = CASE WHEN last_seen_at > ? THEN last_seen_at ELSE ? END WHERE token_hash = ? RETURNING id`, received, received, auth.Digest(token)).Scan(&sourceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return upload, false, ErrUnauthorized
 	}
@@ -287,7 +266,10 @@ source_id, received_at, schema_version, boot_id, upload_id, uptime, firmware, bu
 	duplicate := n == 0
 	var id int64
 	if duplicate {
-		err = tx.QueryRowContext(ctx, "SELECT id, received_at FROM telemetry_uploads WHERE source_id = ? AND dedupe_key = ?", sourceID, dedupe).Scan(&id, &received)
+		err = tx.QueryRowContext(ctx, "SELECT id, received_at, raw_json FROM telemetry_uploads WHERE source_id = ? AND dedupe_key = ?", sourceID, dedupe).Scan(&id, &received, &raw)
+		if err == nil {
+			m, err = telemetry.Parse(raw)
+		}
 	} else {
 		id, err = result.LastInsertId()
 	}
@@ -371,6 +353,9 @@ func (s *Store) Export(ctx context.Context, f Filter, write func(Upload) error) 
 	for rows.Next() {
 		var u Upload
 		if err := rows.Scan(&u.ID, &u.SourceID, &u.SourceName, &u.ReceivedAt, &u.Raw); err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if err := write(u); err != nil {

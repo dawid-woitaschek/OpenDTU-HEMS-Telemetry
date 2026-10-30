@@ -30,6 +30,7 @@ type fixture struct {
 	source  database.Source
 	token   string
 	logs    bytes.Buffer
+	dbPath  string
 }
 
 var fixedTime = time.Date(2026, 10, 30, 14, 5, 0, 0, time.UTC)
@@ -40,18 +41,22 @@ func setup(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := database.Open(filepath.Join(t.TempDir(), "telemetry.db"), cipher)
+	dbPath := filepath.Join(t.TempDir(), "telemetry.db")
+	store, err := database.Open(dbPath, cipher)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { store.Close() })
-	f := &fixture{t: t, store: store}
+	f := &fixture{t: t, store: store, dbPath: dbPath}
 	f.handler, err = New(store, "admin", "test-password", log.New(&f.logs, "", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.source, err = store.CreateSource(context.Background(), "Schwägerin", fixedTime)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateToken(context.Background(), f.source.ID, fixedTime); err != nil {
 		t.Fatal(err)
 	}
 	_, f.token, err = store.ShowToken(context.Background(), f.source.ID)
@@ -118,7 +123,10 @@ func TestIngestionAndSourceAssociation(t *testing.T) {
 	}
 	w = f.request("GET", fmt.Sprintf("/uploads/%d/download", u.ID), "", "admin", "")
 	requireStatus(t, w, http.StatusOK)
-	if w.Body.String() != raw || !strings.Contains(w.Header().Get("Content-Disposition"), "attachment") {
+	if w.Header().Get("Content-Disposition") != fmt.Sprintf(`attachment; filename="telemetry-%d.json"`, u.ID) {
+		t.Fatal("incorrect snapshot Content-Disposition")
+	}
+	if w.Body.String() != raw {
 		t.Fatal("single download changed payload")
 	}
 	if strings.Contains(f.logs.String(), f.token) || strings.Contains(f.logs.String(), "test-password") {
@@ -187,7 +195,7 @@ func TestHealthAndAdministrativeProtection(t *testing.T) {
 		requireStatus(t, f.request("GET", path, "", "", ""), 401)
 		requireStatus(t, f.request("GET", path, "", f.token, ""), 401)
 	}
-	for _, path := range []string{"/sources", "/sources/1/token", "/sources/1/revoke"} {
+	for _, path := range []string{"/sources", "/sources/1/token", "/sources/1/token/create", "/sources/1/token/delete"} {
 		requireStatus(t, f.request("POST", path, "", "", "application/x-www-form-urlencoded"), 401)
 		requireStatus(t, f.request("POST", path, "csrf=invalid", "admin", "application/x-www-form-urlencoded"), 403)
 	}
@@ -209,26 +217,82 @@ func (f *fixture) csrf() string {
 	return match[1]
 }
 
-func TestCreateShowAndRevokeThroughUI(t *testing.T) {
+func TestSourceTokenLifecycleThroughUI(t *testing.T) {
 	f := setup(t)
+	ctx := context.Background()
 	csrf := f.csrf()
 	form := url.Values{"csrf": {csrf}, "name": {"Testgerät B"}}
 	requireStatus(t, f.request("POST", "/sources", form.Encode(), "admin", "application/x-www-form-urlencoded"), 303)
-	sources, err := f.store.Sources(context.Background())
+	sources, err := f.store.Sources(ctx)
 	if err != nil || len(sources) != 2 {
 		t.Fatal("source not created")
 	}
 	created := sources[0]
+	if created.HasToken {
+		t.Fatal("new source should have a Create token action")
+	}
 	form.Del("name")
-	w := f.request("POST", fmt.Sprintf("/sources/%d/token", created.ID), form.Encode(), "admin", "application/x-www-form-urlencoded")
+	sourceURL := fmt.Sprintf("/sources/%d/token", created.ID)
+	assertActions := func(active bool) {
+		t.Helper()
+		w := f.request("GET", "/sources", "", "admin", "")
+		requireStatus(t, w, 200)
+		body := w.Body.String()
+		if strings.Contains(body, "(revoked)") {
+			t.Fatal("source marked revoked")
+		}
+		if strings.Contains(body, `action="`+sourceURL+`/create"`) == active || strings.Contains(body, `action="`+sourceURL+`/delete"`) != active {
+			t.Fatal("incorrect source/token actions")
+		}
+	}
+	assertActions(false)
+	requireStatus(t, f.request("POST", sourceURL, form.Encode(), "admin", "application/x-www-form-urlencoded"), 404)
+	requireStatus(t, f.request("POST", sourceURL+"/create", form.Encode(), "admin", "application/x-www-form-urlencoded"), 303)
+	assertActions(true)
+	w := f.request("POST", sourceURL, form.Encode(), "admin", "application/x-www-form-urlencoded")
 	requireStatus(t, w, 200)
-	_, token, err := f.store.ShowToken(context.Background(), created.ID)
+	_, token, err := f.store.ShowToken(ctx, created.ID)
 	if err != nil || !strings.Contains(w.Body.String(), token) || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("token not shown securely")
 	}
-	requireStatus(t, f.request("POST", fmt.Sprintf("/sources/%d/revoke", created.ID), form.Encode(), "admin", "application/x-www-form-urlencoded"), 303)
-	requireStatus(t, f.request("POST", "/api/v1/telemetry", `{"schema_version":1}`, token, "application/json"), 401)
-	requireStatus(t, f.request("POST", fmt.Sprintf("/sources/%d/token", created.ID), form.Encode(), "admin", "application/x-www-form-urlencoded"), 404)
+	requireStatus(t, f.request("POST", sourceURL+"/create", form.Encode(), "admin", "application/x-www-form-urlencoded"), 409)
+	original := `{"schema_version":1,"boot_id":"b","sequence":1,"checkpoint_sequence":77}`
+	requireStatus(t, f.request("POST", "/api/v1/telemetry", original, token, "application/json"), 200)
+	requireStatus(t, f.request("POST", sourceURL+"/delete", form.Encode(), "admin", "application/x-www-form-urlencoded"), 303)
+	assertActions(false)
+	requireStatus(t, f.request("POST", "/api/v1/telemetry", original, token, "application/json"), 401)
+	requireStatus(t, f.request("POST", sourceURL, form.Encode(), "admin", "application/x-www-form-urlencoded"), 404)
+	requireStatus(t, f.request("POST", sourceURL+"/create", form.Encode(), "admin", "application/x-www-form-urlencoded"), 303)
+	assertActions(true)
+	_, replacement, err := f.store.ShowToken(ctx, created.ID)
+	if err != nil || replacement == token {
+		t.Fatal("credential not replaced")
+	}
+	requireStatus(t, f.request("POST", "/api/v1/telemetry", `{"schema_version":1,"boot_id":"b","sequence":2}`, replacement, "application/json"), 200)
+	requireStatus(t, f.request("POST", "/api/v1/telemetry", original, token, "application/json"), 401)
+	uploads, err := f.store.Uploads(ctx, database.Filter{SourceID: created.ID})
+	if err != nil || len(uploads) != 2 {
+		t.Fatal("token replacement changed source history")
+	}
+	for _, upload := range uploads {
+		if upload.SourceID != created.ID || upload.SourceName != created.Name {
+			t.Fatal("history changed ownership")
+		}
+	}
+	history := f.request("GET", fmt.Sprintf("/uploads/%d/download", uploads[1].ID), "", "admin", "")
+	requireStatus(t, history, 200)
+	if history.Body.String() != original {
+		t.Fatal("historical payload changed")
+	}
+	sources, err = f.store.Sources(ctx)
+	if err != nil || len(sources) != 2 {
+		t.Fatal("token replacement created a second source")
+	}
+	for _, secret := range []string{token, replacement} {
+		if strings.Contains(f.logs.String(), secret) {
+			t.Fatal("credential logged")
+		}
+	}
 }
 
 type callbackReader struct {
@@ -248,7 +312,10 @@ func (r *callbackReader) Read(p []byte) (int, error) {
 func TestRevocationWhileReadingBody(t *testing.T) {
 	f := setup(t)
 	body := &callbackReader{read: strings.NewReader(`{"schema_version":1}`), once: func() {
-		if err := f.store.RevokeSource(context.Background(), f.source.ID, fixedTime); err != nil {
+		if err := f.store.DeleteToken(context.Background(), f.source.ID, fixedTime); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.store.CreateToken(context.Background(), f.source.ID, fixedTime); err != nil {
 			t.Fatal(err)
 		}
 	}}
@@ -286,6 +353,9 @@ func TestZIPExportFiltersAndExactBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := f.store.CreateToken(ctx, other.ID, fixedTime); err != nil {
+		t.Fatal(err)
+	}
 	_, otherToken, err := f.store.ShowToken(ctx, other.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -308,11 +378,14 @@ func TestZIPExportFiltersAndExactBytes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := f.store.RevokeSource(ctx, f.source.ID, fixedTime); err != nil {
+	if err := f.store.DeleteToken(ctx, f.source.ID, fixedTime); err != nil {
 		t.Fatal(err)
 	}
 	w := f.request("GET", fmt.Sprintf("/downloads/export.zip?source_id=%d&from=2026-10-30&to=2026-10-30", f.source.ID), "", "admin", "")
 	requireStatus(t, w, 200)
+	if w.Header().Get("Content-Disposition") != `attachment; filename="telemetry.zip"` {
+		t.Fatal("incorrect ZIP Content-Disposition")
+	}
 	z, err := zip.NewReader(bytes.NewReader(w.Body.Bytes()), int64(w.Body.Len()))
 	if err != nil {
 		t.Fatal(err)
