@@ -62,7 +62,7 @@ func legacyDatabase(t *testing.T) (string, string, string, map[int64][]byte, []b
 	return path, active, deleted, raw, encrypted
 }
 
-func TestMigrationV1ToV2(t *testing.T) {
+func TestMigrationV1ToV3(t *testing.T) {
 	path, active, deleted, raw, encrypted := legacyDatabase(t)
 	s, err := Open(path, testCipher(t, 1))
 	if err != nil {
@@ -71,7 +71,7 @@ func TestMigrationV1ToV2(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 	var version int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 2 {
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 3 {
 		t.Fatalf("schema version: %d, %v", version, err)
 	}
 	var tableSQL string
@@ -123,6 +123,10 @@ func TestMigrationV1ToV2(t *testing.T) {
 		t.Fatal("tokenless legacy source showed a token")
 	}
 	for uploadID, sourceID := range map[int64]int64{105: 17, 206: 41} {
+		projected, err := s.Dashboard(ctx, Filter{SourceID: sourceID}, true, testTime.Add(time.Hour))
+		if err != nil || projected.Current == nil || projected.Current.Point.ID != uploadID || projected.Current.Point.TimeBasis != "collector_receive_fallback" {
+			t.Fatalf("legacy projection missing: %+v, %v", projected, err)
+		}
 		u, err := s.Upload(ctx, uploadID)
 		if err != nil || u.SourceID != sourceID || !bytes.Equal(u.Raw, raw[uploadID]) || u.Metadata.Firmware != "legacy-fw" || u.Metadata.CheckpointSequence != "77" || u.Metadata.Summary.PSRAMFree != "123" {
 			t.Fatalf("migration changed upload %d: %v", uploadID, err)

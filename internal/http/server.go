@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"log"
 	"math"
 	"mime"
@@ -22,6 +23,7 @@ import (
 	"unicode/utf8"
 
 	"opendtu-hems-telemetry/internal/auth"
+	"opendtu-hems-telemetry/internal/dashboard"
 	"opendtu-hems-telemetry/internal/database"
 	"opendtu-hems-telemetry/internal/telemetry"
 	"opendtu-hems-telemetry/web"
@@ -53,7 +55,17 @@ func New(store *database.Store, username, password string, logger *log.Logger) (
 	}
 	s := &Server{store: store, username: username, password: password, csrf: base64.RawURLEncoding.EncodeToString(b), pages: pages, logger: logger}
 	admin := http.NewServeMux()
-	admin.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/uploads", http.StatusSeeOther) })
+	admin.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/overview", http.StatusSeeOther) })
+	for _, path := range []string{"/overview", "/live", "/hems", "/runtime", "/devices"} {
+		admin.HandleFunc("GET "+path, s.dashboardPage)
+	}
+	admin.HandleFunc("GET /dashboard/data", s.dashboardData)
+	admin.HandleFunc("GET /dashboard/live", s.dashboardData)
+	assets, err := fs.Sub(web.Files, "assets")
+	if err != nil {
+		return nil, err
+	}
+	admin.Handle("GET /assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets))))
 	admin.HandleFunc("GET /sources", s.sources)
 	admin.HandleFunc("POST /sources", s.createSource)
 	admin.HandleFunc("POST /sources/{id}/token", s.showToken)
@@ -79,7 +91,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -187,6 +199,9 @@ func deviceUnauthorized(w http.ResponseWriter) {
 
 type page struct {
 	Title          string
+	View           string
+	CaptureTime    string
+	TimeBasis      string
 	CSRF           string
 	Sources        []database.Source
 	Uploads        []database.Upload
@@ -242,7 +257,7 @@ func (s *Server) sources(w http.ResponseWriter, r *http.Request) {
 		s.failure(w, "list sources")
 		return
 	}
-	s.render(w, "sources", page{Title: "Sources / Tokens", Sources: sources})
+	s.render(w, "sources", page{Title: "Senders / Tokens", Sources: sources})
 }
 
 func (s *Server) createSource(w http.ResponseWriter, r *http.Request) {
@@ -427,7 +442,8 @@ func (s *Server) detail(w http.ResponseWriter, r *http.Request) {
 		s.failure(w, "format upload")
 		return
 	}
-	s.render(w, "detail", page{Title: fmt.Sprintf("Upload #%d", u.ID), Upload: u, JSON: pretty.String()})
+	snapshot := dashboard.Parse(u.Raw, parseTime(u.ReceivedAt))
+	s.render(w, "detail", page{CaptureTime: snapshot.Point.CapturedAt, TimeBasis: snapshot.Point.TimeBasis, Title: fmt.Sprintf("Upload #%d", u.ID), Upload: u, JSON: pretty.String()})
 }
 
 func (s *Server) download(w http.ResponseWriter, r *http.Request) {

@@ -1,0 +1,311 @@
+{
+  "schema_version": 1,
+  "boot_id": "fixture-boot-01",
+  "telemetry_sequence": 42,
+  "checkpoint_sequence": 77,
+  "system": {
+    "uptime": 86400,
+    "reset_reason": "POWERON_RESET",
+    "git_hash": "998620bb",
+    "network": {
+      "connected": true
+    },
+    "task_details": [
+      {
+        "name": "hems-energy",
+        "stack_watermark": 4096,
+        "priority": 1
+      }
+    ]
+  },
+  "heap": {
+    "internal": {
+      "free_bytes": 161200,
+      "minimum_free_bytes": 140000,
+      "largest_free_block": 120000
+    },
+    "psram": {
+      "free_bytes": 6200000,
+      "minimum_free_bytes": 5900000,
+      "largest_free_block": 5800000
+    }
+  },
+  "storage": {
+    "enabled": true,
+    "reachable": true,
+    "has_update": true,
+    "stale": false,
+    "age_ms": 120,
+    "failed_polls": 0,
+    "error": "none",
+    "state_of_charge": 62
+  },
+  "wallbox": {
+    "enabled": true,
+    "reachable": true,
+    "has_update": true,
+    "stale": false,
+    "age_ms": 250,
+    "failed_polls": 1,
+    "error": "none"
+  },
+  "diagnostics": {
+    "allocation_failure_count": 0,
+    "dropped_samples": 0,
+    "dropped_allocation_failures": 0,
+    "expired_samples": 0,
+    "expired_allocation_failures": 0,
+    "serialized_checkpoint_count": 1,
+    "checkpoint_batch_truncated": false,
+    "runtime": {
+      "heap": {
+        "failed_alloc_count": 0
+      }
+    },
+    "checkpoints": [
+      {
+        "sequence": 77,
+        "stack_free_bytes": 6144
+      }
+    ]
+  },
+  "hems": {
+    "captured_at_utc": 1793368800,
+    "captured_at_uptime_ms": 86400000,
+    "trigger": [
+      "periodic",
+      "plan_revision"
+    ],
+    "global_mode": "Monitor",
+    "read_only": true,
+    "control": {
+      "storage": {
+        "mode": "hems",
+        "permission": false,
+        "automatic": {
+          "writes_possible": false,
+          "blockers": [
+            "global_mode_inactive",
+            "device_permission_missing"
+          ]
+        }
+      },
+      "evse": {
+        "mode": "hems",
+        "permission": false,
+        "automatic": {
+          "writes_possible": false,
+          "blockers": [
+            "global_mode_inactive",
+            "device_permission_missing"
+          ]
+        }
+      }
+    },
+    "normalized": {
+      "grid": {
+        "power_w": {
+          "quality": "fresh",
+          "value": -420
+        }
+      },
+      "pv": {
+        "ac_power_w": {
+          "quality": "fresh",
+          "value": 2800
+        }
+      },
+      "storage": {
+        "device": {
+          "enabled": true,
+          "reachable": true,
+          "has_update": true,
+          "age_ms": 120
+        },
+        "soc_pct": {
+          "quality": "fresh",
+          "value": 62
+        },
+        "ac_power_w": {
+          "quality": "fresh",
+          "value": 800
+        }
+      },
+      "evse": {
+        "power_w": {
+          "quality": "fresh",
+          "value": 0
+        }
+      }
+    },
+    "optimizer": {
+      "state": "ready",
+      "plan_valid": true,
+      "plan_revision": 19,
+      "plan_reason": "current_interval",
+      "plan_blocker": null,
+      "replan_reason": "tariff_revision",
+      "current_planned_battery_w": -800,
+      "stale_inputs": false,
+      "optimized_cost_nano": 1250000000,
+      "baseline_cost_nano": 1750000000,
+      "modeled_savings_nano": 500000000,
+      "currency": "EUR",
+      "cost_breakdown": {
+        "degradation_nano": 10000000,
+        "terminal_inventory_change_nano": -25000000
+      },
+      "retained_by_hysteresis": false,
+      "load_forecast_source": "constant_fallback",
+      "config": {
+        "expected_base_load_w": 400,
+        "min_soc_pct": 15,
+        "max_soc_pct": 95,
+        "max_charge_w": 3000,
+        "max_discharge_w": 3000,
+        "policies": {
+          "grid_charging_allowed": true
+        },
+        "energy_management": {
+          "pv_export": true,
+          "battery_export": false
+        }
+      },
+      "warnings": [
+        "modeled_savings_not_guaranteed"
+      ],
+      "assumptions": [
+        "constant_base_load"
+      ],
+      "blockers": [],
+      "policy_restrictions": [],
+      "tariff_usable": true,
+      "forecast_source": "solcast",
+      "schedule_truncated": false,
+      "schedule": [
+        {
+          "start": 1793368800,
+          "end": 1793369700,
+          "battery_w": -800,
+          "end_soc_pct": 62,
+          "pv_w": 2800,
+          "assumed_load_w": 400,
+          "import_price_micros_per_kwh": 312500,
+          "action": "discharge"
+        },
+        {
+          "start": 1793369700,
+          "end": 1793370600,
+          "battery_w": -800,
+          "end_soc_pct": 61,
+          "pv_w": 2400,
+          "assumed_load_w": 400,
+          "import_price_micros_per_kwh": 312500,
+          "action": "discharge"
+        },
+        {
+          "start": 1793370600,
+          "end": 1793371500,
+          "battery_w": 600,
+          "end_soc_pct": 60,
+          "pv_w": 2000,
+          "assumed_load_w": 400,
+          "import_price_micros_per_kwh": 312500,
+          "action": "charge"
+        },
+        {
+          "start": 1793371500,
+          "end": 1793372400,
+          "battery_w": 600,
+          "end_soc_pct": 59,
+          "pv_w": 1600,
+          "assumed_load_w": 400,
+          "import_price_micros_per_kwh": 312500,
+          "action": "charge"
+        },
+        {
+          "start": 1793372400,
+          "end": 1793373300,
+          "battery_w": 600,
+          "end_soc_pct": 58,
+          "pv_w": 1200,
+          "assumed_load_w": 400,
+          "import_price_micros_per_kwh": 312500,
+          "action": "charge"
+        },
+        {
+          "start": 1793373300,
+          "end": 1793374200,
+          "battery_w": 600,
+          "end_soc_pct": 57,
+          "pv_w": 800,
+          "assumed_load_w": 400,
+          "import_price_micros_per_kwh": 312500,
+          "action": "charge"
+        }
+      ]
+    },
+    "economic_dispatch": {
+      "coordinated_battery_w": -700,
+      "state": "monitor",
+      "coordination_state": "current_interval"
+    },
+    "shadow_if_active": {
+      "valid": true,
+      "action": "set_discharge_power_w",
+      "power_w": -800,
+      "reason": "current_interval",
+      "assumed_mode": "Active",
+      "device_writes": false
+    },
+    "constraints": {
+      "applicable": {
+        "charge_allowed": true,
+        "discharge_allowed": true,
+        "max_charge_power_w": 3000,
+        "max_discharge_power_w": 3000
+      },
+      "physical": {
+        "known": true,
+        "max_charge_w": 3500,
+        "max_discharge_w": 3500
+      },
+      "ev_protection": {
+        "state": "idle"
+      }
+    },
+    "flow": {
+      "dpl_available": true,
+      "dpl_fresh": true
+    },
+    "tariff": {
+      "enabled": true,
+      "provider": "awattar",
+      "fresh": true,
+      "planning_usable": true,
+      "state": "ready",
+      "last_error": null,
+      "transport_age_seconds": 300,
+      "fetched_at_utc": 1793368500,
+      "current_covered": true,
+      "currency": "EUR",
+      "current": {
+        "start": 1793368800,
+        "end": 1793372400,
+        "price_micros_per_kwh": 212500,
+        "import_price_micros_per_kwh": 312500
+      }
+    },
+    "forecast": {
+      "enabled": true,
+      "provider": "solcast",
+      "fresh": true,
+      "planning_usable": true,
+      "state": "ready",
+      "last_error": null,
+      "transport_age_seconds": 300,
+      "fetched_at_utc": 1793368500,
+      "current_covered": true
+    }
+  }
+}

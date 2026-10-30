@@ -1,11 +1,12 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 )
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 // The v1 schema is retained as the initial migration so new and existing
 // databases take the same transactional upgrade path.
@@ -66,6 +67,17 @@ UPDATE telemetry_sources SET token_encrypted = NULL, token_hash = NULL WHERE tok
 UPDATE telemetry_sources SET token_created_at = created_at WHERE token_hash IS NOT NULL;
 PRAGMA user_version = 2;`)
 		if err != nil {
+			return err
+		}
+	}
+	if version <= 2 {
+		if _, err := tx.Exec(dashboardSchema); err != nil {
+			return err
+		}
+		if err := backfillDashboard(context.Background(), tx); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("PRAGMA user_version = 3"); err != nil {
 			return err
 		}
 	}

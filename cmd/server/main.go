@@ -32,8 +32,8 @@ func main() {
 		}
 		return
 	}
-	if len(os.Args) != 1 {
-		log.Fatal("usage: collector [healthcheck]")
+	if len(os.Args) != 1 && !(len(os.Args) == 2 && os.Args[1] == "rebuild-dashboard") {
+		log.Fatal("usage: collector [healthcheck|rebuild-dashboard]")
 	}
 	if err := run(); err != nil {
 		log.Fatal(err)
@@ -61,6 +61,9 @@ func run() error {
 		return err
 	}
 	defer store.Close()
+	if len(os.Args) == 2 && os.Args[1] == "rebuild-dashboard" {
+		return store.RebuildDashboard(context.Background())
+	}
 	handler, err := httpserver.New(store, username, password, log.Default())
 	if err != nil {
 		return err
