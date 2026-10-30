@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "boot_id": "example-boot-2026-10-30",
+  "upload_id": "example-snapshot-42",
+  "telemetry_sequence": 42,
+  "checkpoint_sequence": 128,
+  "system": {
+    "uptime_seconds": 83640,
+    "firmware_version": "OpenDTU-HEMS field-test",
+    "build": {
+      "git": "example-build-id",
+      "platformio_environment": "esp32s3-example"
+    },
+    "chip": {"model": "ESP32-S3", "revision": 2, "cores": 2},
+    "cpu": {"frequency_mhz": 240},
+    "reset_reason": "POWERON_RESET",
+    "previous_reset": {"reason": "SW_RESET", "uptime_seconds": 100000},
+    "network": {"connected": true, "rssi_dbm": -61, "ip": "192.0.2.10"},
+    "radio": {"connected": true, "tx_success": 1234, "tx_failed": 2}
+  },
+  "diagnostics": {
+    "context": "hourly_snapshot",
+    "boot": {"stage": "running", "duration_ms": 2310},
+    "previous_boot": {"last_checkpoint": "loop_idle", "sequence": 97},
+    "failed_allocation": {"size": 0, "capabilities": 0, "context": null},
+    "counters": {"allocation_failures": 0, "watchdog_warnings": 0},
+    "checkpoints": [{"sequence": 128, "uptime_seconds": 83640, "context": "loop_idle"}],
+    "stack_watermarks": {"loop_task_bytes": 4096, "modbus_task_bytes": 2048}
+  },
+  "heap": {
+    "internal": {
+      "free_bytes": 132000,
+      "minimum_free_bytes": 118000,
+      "largest_free_block": 96000,
+      "allocated_bytes": 190000,
+      "free_block_count": 42,
+      "allocated_block_count": 315,
+      "fragmentation_percent": 27.27,
+      "history": [{"checkpoint": "boot_complete", "free_bytes": 148000}]
+    },
+    "psram": {
+      "total_bytes": 8388608,
+      "free_bytes": 7340032,
+      "minimum_free_bytes": 7000000,
+      "largest_free_block": 7200000,
+      "allocated_bytes": 1048576,
+      "free_block_count": 12,
+      "allocated_block_count": 64,
+      "fragmentation_percent": 1.91,
+      "history": [{"checkpoint": "boot_complete", "free_bytes": 7800000}]
+    }
+  },
+  "storage": {
+    "provider": "marstek",
+    "connection_state": "connected",
+    "communication_state": "ok",
+    "state_of_charge": 58.0,
+    "state": "charging",
+    "charge_power_w": 350,
+    "discharge_power_w": 0,
+    "limits": {"charge_power_w": 2500, "discharge_power_w": 2500},
+    "temperature_c": 27.5,
+    "voltage_v": 51.4,
+    "current_a": 6.8,
+    "raw": {"provider_status": 1, "errors": [], "registers": {"32104": 580}}
+  },
+  "wallbox": {
+    "provider": "warp",
+    "connection_state": "connected",
+    "charging_state": "charging",
+    "vehicle_connected": true,
+    "requested_current_a": 6,
+    "charging_power_w": 4140,
+    "phases": [{"phase": 1, "current_a": 6}, {"phase": 2, "current_a": 6}, {"phase": 3, "current_a": 6}],
+    "current_limit_a": 16,
+    "energy_wh": 123456,
+    "raw": {"warp_state": {"charger_state": 3}, "errors": [], "registers": {"1000": 3}}
+  },
+  "modbus": {
+    "storage": {
+      "provider": "marstek",
+      "registers": {"32104": 580},
+      "diagnostics": {"timeouts": 0}
+    },
+    "wallbox": {
+      "provider": "warp",
+      "registers": {"1000": 3}
+    },
+    "another_device": {
+      "provider": "example",
+      "registers": {"9999": {"words": [0, 42], "decoded": 42}},
+      "provider_specific": {"sample_status": "ok"}
+    }
+  }
+}

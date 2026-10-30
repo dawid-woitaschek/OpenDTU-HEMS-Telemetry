@@ -1,0 +1,13 @@
+.git
+.agents
+.aws
+.codex
+.env
+.env.*
+data
+work
+output
+collector
+*.db
+*.db-wal
+*.db-shm

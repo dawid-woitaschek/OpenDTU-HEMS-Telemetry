@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+/data/
+/work/
+/output/
+/collector
+*.db
+*.db-wal
+*.db-shm

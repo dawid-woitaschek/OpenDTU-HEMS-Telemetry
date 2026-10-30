@@ -1,0 +1,33 @@
+services:
+  hems-telemetry:
+    build: .
+    platform: linux/arm64
+    restart: unless-stopped
+    environment:
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?Set ADMIN_USERNAME in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY in .env}
+      DATA_DIR: /data
+    volumes:
+      - ./data:/data
+    networks:
+      - proxy
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.hems-telemetry.rule=Host(`${TELEMETRY_HOST:?Set TELEMETRY_HOST in .env}`)
+      - traefik.http.routers.hems-telemetry.entrypoints=websecure
+      - traefik.http.routers.hems-telemetry.tls=true
+      # If Dockyard requires a named certificate resolver, uncomment and adapt:
+      # - traefik.http.routers.hems-telemetry.tls.certresolver=letsencrypt
+      - traefik.http.routers.hems-telemetry.service=hems-telemetry
+      - traefik.http.services.hems-telemetry.loadbalancer.server.port=8080
+
+networks:
+  proxy:
+    external: true
