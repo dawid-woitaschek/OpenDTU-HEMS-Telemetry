@@ -272,6 +272,9 @@ source_id, received_at, schema_version, boot_id, upload_id, uptime, firmware, bu
 		}
 	} else {
 		id, err = result.LastInsertId()
+		if err == nil {
+			err = projectUpload(ctx, tx, id, sourceID, raw, received)
+		}
 	}
 	if err != nil {
 		return upload, false, err

@@ -1,0 +1,12 @@
+{
+  "name": "opendtu-hems-telemetry-ui",
+  "private": true,
+  "scripts": {
+    "check": "node --check web/assets/dashboard.js && node --check web/assets/theme.js && node --check web/assets/shell.js && prettier --check web/assets/dashboard.js web/assets/theme.js web/assets/shell.js web/assets/dashboard.css scripts/dashboard-smoke.mjs",
+    "test:browser": "node scripts/dashboard-smoke.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.56.1",
+    "prettier": "3.6.2"
+  }
+}

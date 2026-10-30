@@ -1,0 +1,27 @@
+{{define "dashboard"}}{{template "top" .}}
+<form id="dashboard-filters" class="filterbar" method="get">
+<label>Sender <select name="sender" id="sender" required>{{range .Sources}}<option value="{{.ID}}">{{.Name}}</option>{{else}}<option value="">No senders</option>{{end}}</select></label>
+<label id="range-label">Time range <select name="range" id="range"><option value="6h">Last 6h</option><option value="24h" selected>Last 24h</option><option value="7d">Last 7d</option><option value="30d">Last 30d</option><option value="custom">Custom</option></select></label>
+<div id="custom-dates" hidden><label>From (UTC)<input id="from" type="datetime-local" step="1"></label><label>Until (UTC, exclusive)<input id="to" type="datetime-local" step="1"></label></div>
+<button class="primary" type="submit">↻ Refresh</button><span id="update-status" class="filter-status" role="status">Loading snapshots…</span>
+</form>
+<div class="context-line"><span id="dataset-label">Capture-time observations</span><span id="dataset-count"></span></div>
+<div id="dashboard-error" class="notice error" role="alert" hidden></div>
+<div id="empty" class="empty panel" hidden><span class="empty-icon">▥</span><h2>No snapshots in this view</h2><p>Select another sender or time range. Once a sender uploads telemetry, its observations appear here.</p><a href="/sources">Manage senders →</a></div>
+<div id="dashboard-content" hidden>
+<div class="kpi-grid" id="kpis"></div>
+<div id="overview-panels">
+<div class="analysis-grid"><section class="panel energy-panel"><div class="panel-heading"><div><h2>Energy flow over capture time</h2><p>Grid + import / − export · Storage + charge / − discharge</p></div><span class="tag">OBSERVED</span></div><div id="energy-chart" class="chart large" role="img" aria-label="Energy flow chart, watts over capture time"></div></section>
+<section class="panel decision-panel"><div class="panel-heading"><h2>Current HEMS decision</h2><span id="mode-badge" class="badge"></span></div><div id="decision"></div></section>
+<section class="panel"><div class="panel-heading"><div><h2>Tariff & effective import price</h2><p>Captured current intervals · ct/kWh · currency in tariff details</p></div></div><div id="price-chart" class="chart" role="img" aria-label="Market and effective import prices"></div></section>
+<section class="panel"><div class="panel-heading"><div><h2>Storage SoC & planned battery power</h2><p>Actual observations vs optimizer and Active preview</p></div></div><div id="storage-chart" class="chart" role="img" aria-label="Storage state of charge and battery power"></div></section>
+</div>
+<div class="support-grid"><section class="panel"><div class="panel-heading"><div><h2>Runtime health · ESP32</h2><p>INTERNAL left · PSRAM right · bytes</p></div><a href="/runtime" data-filter-link>Details ↗</a></div><div id="runtime-mini" class="chart compact" role="img" aria-label="Heap availability chart"></div></section><section class="panel"><div class="panel-heading"><h2>Devices & providers</h2><a href="/devices" data-filter-link>Details ↗</a></div><div id="device-mini"></div></section></div>
+<section class="panel"><div class="panel-heading"><div><h2>Recent snapshots</h2><p>Exact captures · open a row to inspect the original record</p></div><a href="/uploads" id="all-uploads">All uploads ↗</a></div><div class="scroll"><table><thead><tr><th>Capture time (UTC)</th><th>Trigger</th><th>Grid</th><th>Effective price</th><th>SoC</th><th>Shadow action</th><th>Collector / ACK</th><th>Payload</th></tr></thead><tbody id="recent"></tbody></table></div></section>
+</div>
+<div id="hems-panels" hidden><section class="panel"><div class="panel-heading"><div><h2>Optimizer schedule</h2><p id="schedule-note">Future plan from the selected snapshot; these are modeled values, not measurements.</p></div><span class="tag">PLANNED</span></div><div id="schedule-chart" class="chart" role="img" aria-label="Planned battery power and end state of charge"></div><div class="scroll"><table><thead><tr><th>Interval (UTC)</th><th>Action</th><th>Battery</th><th>End SoC</th><th>PV</th><th>Load assumption</th><th>Effective price</th></tr></thead><tbody id="schedule"></tbody></table></div></section><div class="detail-grid" id="hems-details"></div></div>
+<div id="runtime-panels" hidden><section class="panel"><div class="panel-heading"><div><h2>ESP32 memory over capture time</h2><p>INTERNAL left: free, largest block, minimum · PSRAM right · bytes</p></div></div><div id="runtime-chart" class="chart tall" role="img" aria-label="Runtime memory chart"></div></section><div class="detail-grid" id="runtime-details"></div></div>
+<div id="devices-panels" hidden><div class="detail-grid" id="devices-details"></div><section class="panel"><div class="panel-heading"><div><h2>Device & provider history</h2><p>Signal quality as reported at each capture · snapshot age is separate</p></div></div><div class="scroll"><table><thead><tr><th>Capture time</th><th>Grid quality</th><th>Storage quality</th><th>SoC</th><th>EVSE quality</th><th>EVSE power</th><th>Tariff quality</th></tr></thead><tbody id="device-history"></tbody></table></div></section></div>
+</div>
+<script src="/assets/echarts.min.js" defer></script><script src="/assets/dashboard.js" defer></script>
+{{template "bottom" .}}{{end}}
