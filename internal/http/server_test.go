@@ -123,9 +123,7 @@ func TestIngestionAndSourceAssociation(t *testing.T) {
 	}
 	w = f.request("GET", fmt.Sprintf("/uploads/%d/download", u.ID), "", "admin", "")
 	requireStatus(t, w, http.StatusOK)
-	if w.Header().Get("Content-Disposition") != fmt.Sprintf(`attachment; filename="telemetry-%d.json"`, u.ID) {
-		t.Fatal("incorrect snapshot Content-Disposition")
-	}
+	requireHeaderValue(t, w.Header(), "Content-Disposition", fmt.Sprintf(`attachment; filename="telemetry-%d.json"`, u.ID))
 	if w.Body.String() != raw {
 		t.Fatal("single download changed payload")
 	}
@@ -383,9 +381,7 @@ func TestZIPExportFiltersAndExactBytes(t *testing.T) {
 	}
 	w := f.request("GET", fmt.Sprintf("/downloads/export.zip?source_id=%d&from=2026-10-30&to=2026-10-30", f.source.ID), "", "admin", "")
 	requireStatus(t, w, 200)
-	if w.Header().Get("Content-Disposition") != `attachment; filename="telemetry.zip"` {
-		t.Fatal("incorrect ZIP Content-Disposition")
-	}
+	requireHeaderValue(t, w.Header(), "Content-Disposition", `attachment; filename="telemetry.zip"`)
 	z, err := zip.NewReader(bytes.NewReader(w.Body.Bytes()), int64(w.Body.Len()))
 	if err != nil {
 		t.Fatal(err)
